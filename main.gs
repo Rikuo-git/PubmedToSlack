@@ -72,7 +72,7 @@ function getInfoFromRSS(item) {
   const namespaceDc = XmlService.getNamespace("dc", "http://purl.org/dc/elements/1.1/");
   const pmid = item.getChildText('guid').replace("pubmed:", "");
   const link = `https://pubmed.ncbi.nlm.nih.gov/${pmid}`;
-  const title = mrkdwnEscape(item.getChildText('title'));
+  const title = mrkdwnEscape(item.getChildText('title').replace(/<\/?em>/g, "_").replace(/<\/?(sup|sub)>/g, ""));
   const titleJa = LanguageApp.translate(title, 'en', 'ja');
   const authors = item.getChildren('creator', namespaceDc);
   let author = authors.length ? `${authors[0].getText()}${authors.length > 1 ? ", _et al._" : ""}` : "No Author";
