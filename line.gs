@@ -1,6 +1,6 @@
 /**
  * Main function that retrieves RSS feeds and webhook URLs from a Google Spreadsheet,
- * checks for new papers, and sends notifications to the corresponding Slack channels.
+ * checks for new papers, and sends LINE notifications.
  *
  * @function
  */
