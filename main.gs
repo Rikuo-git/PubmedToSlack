@@ -28,24 +28,23 @@ function main() {
  * Fetches new papers from an RSS feed and sends the results to a Slack channel.
  * 
  * @function
- * @param {Array} rssData - An array containing the keyword, RSS URL, target, and last_updated date.
+ * @param {Array} rssData - An array containing the keyword, RSS URL, target, and history.
  * @param {Object} webhookData - An object containing the webhook URL for the target Slack channel.
- * @returns {Date} - A Date object representing the last_updated date or the current date if new papers are found.
+ * @returns {string} - A JSON string representing the history of PubMed IDs that have been posted.
  */
 function fetchAndPostNewPapers(rssData, webhookData) {
-  const now = new Date();
-  const [keyword, rssUrl, target, lastUpdated] = rssData;
+  const [keyword, rssUrl, target, history] = rssData;
   const webhookUrl = webhookData[target];
-  const lastUpdatedDate = lastUpdated ? new Date(lastUpdated) : sixMonthsAgo();
+  const historySet = history ? new Set(JSON.parse(history)) : new Set()
   const rssResponse = UrlFetchApp.fetch(rssUrl);
 
-  if (rssResponse.getResponseCode() !== 200) return lastUpdatedDate;
+  if (rssResponse.getResponseCode() !== 200) return history;
 
   const rssContent = XmlService.parse(rssResponse.getContentText());
   const newPapers = rssContent.getRootElement().getChild('channel').getChildren('item').reverse()
-    .filter(item => new Date(item.getChildText('pubDate')) > lastUpdatedDate);
+    .filter(item => !historySet.has(item.getChildText('guid')) && historySet.add(item.getChildText('guid')));
 
-  if (newPapers.length < 1) return now;
+  if (!newPapers.length) return history;
 
   const messageTitle = `Here are ${newPapers.length} new papers for *${keyword}* :eyes:`;
   const blocks = [{
@@ -55,10 +54,9 @@ function fetchAndPostNewPapers(rssData, webhookData) {
       text: messageTitle
     }
   }];
-
   blocks.push(...newPapers.map(getInfoFromRSS).reduce(appendPapersToBlocks, []));
   const slackResponse = sendSlackMsg(messageTitle, blocks, webhookUrl);
-  return slackResponse.getResponseCode() === 200 ? now : lastUpdatedDate;
+  return slackResponse.getResponseCode() === 200 ? JSON.stringify([...historySet]) : history;
 }
 
 /**
@@ -69,15 +67,15 @@ function fetchAndPostNewPapers(rssData, webhookData) {
  * @returns {string} - A formatted string containing the item's information in mrkdwn format, including a link to the item, title, translated title, author(s), journal, and date.
  */
 function getInfoFromRSS(item) {
-  const namespaceDc = XmlService.getNamespace("dc", "http://purl.org/dc/elements/1.1/");
+  const nsDc = XmlService.getNamespace("dc", "http://purl.org/dc/elements/1.1/");
   const pmid = item.getChildText('guid').replace("pubmed:", "");
   const link = `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
   const title = mrkdwnEscape(item.getChildText('title').replace(/<\/?em>/g, "_").replace(/<\/?(sup|sub)>/g, ""));
   const titleJa = LanguageApp.translate(title, 'en', 'ja');
-  const authors = item.getChildren('creator', namespaceDc);
+  const authors = item.getChildren('creator', nsDc);
   let author = authors.length ? `${authors[0].getText()}${authors.length > 1 ? ", _et al._" : ""}` : "No Author";
-  const journal = item.getChildText('source', namespaceDc);
-  const date = item.getChildText('date', namespaceDc);
+  const journal = item.getChildText('source', nsDc);
+  const date = item.getChildText('date', nsDc);
   return `><${link}|*${title}*>\n>${titleJa}\n>${author} _*${journal}*_ ${date}\n  \n`;
 }
 
@@ -142,16 +140,4 @@ function mrkdwnEscape(string) {
       '>': '&gt;',
     }[match];
   });
-}
-
-/**
- * Returns a Date object representing the date six months ago from today.
- * 
- * @function
- * @returns {Date} - A Date object representing the date six months ago.
- */
-function sixMonthsAgo() {
-  const today = new Date();
-  today.setMonth(today.getMonth() - 6);
-  return today;
 }
