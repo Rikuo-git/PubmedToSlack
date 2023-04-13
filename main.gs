@@ -17,7 +17,7 @@ function main() {
   const result = rssSheet.getValues()
     .map((rssData, index) => {
       if (index === 0) return rssData;
-      rssData[3] = fetchAndPostNewPapers(rssData, webhookData).toISOString();
+      rssData[3] = fetchAndPostNewPapers(rssData, webhookData);
       return rssData;
     });
 
@@ -71,7 +71,7 @@ function fetchAndPostNewPapers(rssData, webhookData) {
 function getInfoFromRSS(item) {
   const namespaceDc = XmlService.getNamespace("dc", "http://purl.org/dc/elements/1.1/");
   const pmid = item.getChildText('guid').replace("pubmed:", "");
-  const link = `https://pubmed.ncbi.nlm.nih.gov/${pmid}`;
+  const link = `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
   const title = mrkdwnEscape(item.getChildText('title').replace(/<\/?em>/g, "_").replace(/<\/?(sup|sub)>/g, ""));
   const titleJa = LanguageApp.translate(title, 'en', 'ja');
   const authors = item.getChildren('creator', namespaceDc);
