@@ -46,16 +46,16 @@ function fetchAndPostNewPapers(rssData, webhookData) {
 
   if (!newPapers.length) return history;
 
-  const messageTitle = `Here are ${newPapers.length} new papers for *${keyword}* :eyes:`;
+  const title = `Here are ${newPapers.length} new papers for *${keyword}* :eyes:`;
   const blocks = [{
     type: "section",
     text: {
       type: "mrkdwn",
-      text: messageTitle
+      text: title
     }
   }];
   blocks.push(...newPapers.map(getInfoFromRSS).reduce(appendPapersToBlocks, []));
-  const slackResponse = sendSlackMsg(messageTitle, blocks, webhookUrl);
+  const slackResponse = sendSlackMsg(title, blocks, webhookUrl);
   return slackResponse.getResponseCode() === 200 ? JSON.stringify([...historySet]) : history;
 }
 
