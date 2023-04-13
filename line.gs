@@ -1,17 +1,10 @@
 /**
- * setting
- */
-SLACK_NOTIFY = true
-LINE_NOTIFY = true
-LINE_TOKEN = ""
-
-/**
  * Main function that retrieves RSS feeds and webhook URLs from a Google Spreadsheet,
  * checks for new papers, and sends notifications to the corresponding Slack channels.
  *
  * @function
  */
-function line() {
+function pubmedToLINE() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const rssSheet = ss.getSheetByName("RSS").getDataRange();
   const tokenData = ss.getSheetByName("tokens").getDataRange().getValues()
@@ -24,7 +17,7 @@ function line() {
   const result = rssSheet.getValues()
     .map((rssData, index) => {
       if (index === 0) return rssData;
-      rssData[3] = linefetchAndPostNewPapers(rssData, tokenData);
+      rssData[3] = fetchAndPostNewPapersLINE(rssData, tokenData);
       return rssData;
     });
 
@@ -32,19 +25,20 @@ function line() {
 }
 
 /**
- * Fetches new papers from an RSS feed and sends the results to a Slack channel.
+ * Fetches new papers from an RSS feed and sends the results to LINE notification.
  * 
  * @function
  * @param {Array} rssData - An array containing the keyword, RSS URL, target, and history.
  * @param {Object} tokenData - An object containing the LINE Notify API access token. 
  * @returns {string} - A JSON string representing the history of PubMed IDs that have been posted.
  */
-function linefetchAndPostNewPapers(rssData, tokenData) {
+function fetchAndPostNewPapersLINE(rssData, tokenData) {
   const [keyword, rssUrl, target, history] = rssData;
   const token = tokenData[target];
-  const historySet = history ? new Set(JSON.parse(history)) : new Set()
-  const rssResponse = UrlFetchApp.fetch(rssUrl);
+  if (!token) return history;
 
+  const historySet = history ? new Set(JSON.parse(history)) : new Set();
+  const rssResponse = UrlFetchApp.fetch(rssUrl);
   if (rssResponse.getResponseCode() !== 200) return history;
 
   const rssContent = XmlService.parse(rssResponse.getContentText());
@@ -54,19 +48,19 @@ function linefetchAndPostNewPapers(rssData, tokenData) {
   if (!newPapers.length) return history;
 
   const title = `\nHere are ${newPapers.length} new papers for ${keyword}\n`;
-  const blocks = newPapers.map(linegetInfoFromRSS).reduce(lineappendPapersToBlocks,[title])
-  const slackResponse = blocks.map(text => sendLineNotification(text,token)).every(r => r.getResponseCode() === 200)
-  return slackResponse ? JSON.stringify([...historySet]) : history;
+  const blocks = newPapers.map(getInfoFromRSSLINE).reduce(textToBlocks, [title]);
+  const lineResponse = blocks.map((text,index) => sendLineNotification(text, token,index !== 0)).every(r => r.getResponseCode() === 200)
+  return lineResponse ? JSON.stringify([...historySet]) : history;
 }
 
 /**
- * Extracts and formats information from an RSS item element for display.
+ * Extracts and formats information from an RSS item element for display.(LINEversion)
  * 
  * @function
  * @param {GoogleAppsScript.XML_Service.Element} item - An XML Element object representing an item from an RSS feed.
  * @returns {string} - A formatted string containing the item's information in mrkdwn format, including a link to the item, title, translated title, author(s), journal, and date.
  */
-function linegetInfoFromRSS(item) {
+function getInfoFromRSSLINE(item) {
   const nsDc = XmlService.getNamespace("dc", "http://purl.org/dc/elements/1.1/");
   const pmid = item.getChildText('guid').replace("pubmed:", "");
   const link = `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
@@ -80,29 +74,30 @@ function linegetInfoFromRSS(item) {
 }
 
 /**
- * Appends a formatted text to blocks and separates sections every 5 items.
+ * Appends text to the last element of the blocks array. If the last element's length plus the text length
+ * exceeds 1000 characters, the text will be added as a new element in the array.
  * 
  * @function
- * @param {Array} blocks - An array of block objects to which the formatted text will be appended.
- * @param {string} text - The formatted text that needs to be appended to the blocks.
- * @param {number} index - The current index of the item being processed, used to determine if a new section should be created.
- * @returns {Array} - An updated array of block objects with the formatted text appended.
+ * @param {Array} blocks - An array of strings, where each element represents a block of text.
+ * @param {string} text - The text to be appended to the last element of the blocks array.
+ * @returns {Array} - The updated array of blocks with the text appended to the last element or added as a new element.
  */
-function lineappendPapersToBlocks(blocks, text, index) {
+function textToBlocks(blocks, text) {
   if (blocks[blocks.length - 1].length + text.length > 1000) {
-    blocks.push(text)
+    blocks.push(text);
   } else {
     blocks[blocks.length - 1] += text;
   }
   return blocks;
 }
 
+
 /**
- * Escapes special characters in a string for use in mrkdwn format.
+ * Escapes special characters in a string for use in LINE notification.
  * 
  * @function
  * @param {string} string - The input string that contains special characters to be escaped.
- * @returns {string} - A new string with special characters escaped for use in mrkdwn.
+ * @returns {string} - A new string with special characters escaped for use in  LINE notification.
  */
 function lineEscape(string) {
   return string.replace(/(&amp;|&lt;|&gt;)/g, function (match) {
@@ -114,8 +109,6 @@ function lineEscape(string) {
   });
 }
 
-
-
 /**
  * Sends a text message notification to a LINE account using the LINE Notify API.
  * 
@@ -124,15 +117,18 @@ function lineEscape(string) {
  * @param {string} token - The LINE Notify API access token.
  * @returns {HTTPResponse} - The HTTP response returned by the LINE Notify API after sending the notification.
  */
-function sendLineNotification(text, token) {
+function sendLineNotification(text, token, disableNotification = false) {
   const url = "https://notify-api.line.me/api/notify";
   const options = {
     method: "post",
     headers: {
       Authorization: "Bearer " + token,
     },
-    payload: "message=" + text,
-    muteHttpExceptions:true
+    payload: {
+      message: text,
+      notificationDisabled : disableNotification
+    },
+    muteHttpExceptions: true
   };
   return UrlFetchApp.fetch(url, options,);
 }

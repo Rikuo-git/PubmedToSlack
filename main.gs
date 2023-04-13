@@ -4,7 +4,7 @@
  *
  * @function
  */
-function main() {
+function pubmedToSlack() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const rssSheet = ss.getSheetByName("RSS").getDataRange();
   const webhookData = ss.getSheetByName("webhooks").getDataRange().getValues()
