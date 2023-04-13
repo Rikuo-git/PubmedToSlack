@@ -1,13 +1,20 @@
 /**
+ * setting
+ */
+SLACK_NOTIFY = true
+LINE_NOTIFY = true
+LINE_TOKEN = ""
+
+/**
  * Main function that retrieves RSS feeds and webhook URLs from a Google Spreadsheet,
  * checks for new papers, and sends notifications to the corresponding Slack channels.
  *
  * @function
  */
-function main() {
+function line() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const rssSheet = ss.getSheetByName("RSS").getDataRange();
-  const webhookData = ss.getSheetByName("webhooks").getDataRange().getValues()
+  const tokenData = ss.getSheetByName("tokens").getDataRange().getValues()
     .reduce((dict, row, index) => {
       if (index === 0) return dict;
       dict[row[0]] = row[1];
@@ -17,7 +24,7 @@ function main() {
   const result = rssSheet.getValues()
     .map((rssData, index) => {
       if (index === 0) return rssData;
-      rssData[3] = fetchAndPostNewPapers(rssData, webhookData);
+      rssData[3] = linefetchAndPostNewPapers(rssData, tokenData);
       return rssData;
     });
 
@@ -29,16 +36,14 @@ function main() {
  * 
  * @function
  * @param {Array} rssData - An array containing the keyword, RSS URL, target, and history.
- * @param {Object} webhookData - An object containing the webhook URL for the target Slack channel.
+ * @param {Object} tokenData - An object containing the LINE Notify API access token. 
  * @returns {string} - A JSON string representing the history of PubMed IDs that have been posted.
  */
-function fetchAndPostNewPapers(rssData, webhookData) {
+function linefetchAndPostNewPapers(rssData, tokenData) {
   const [keyword, rssUrl, target, history] = rssData;
-  const webhookUrl = webhookData[target];
-  if (!webhookUrl) return history;
-  
+  const token = tokenData[target];
   const historySet = history ? new Set(JSON.parse(history)) : new Set()
-  const rssResponse = UrlFetchApp.fetch(rssUrl,{muteHttpExceptions:true});
+  const rssResponse = UrlFetchApp.fetch(rssUrl);
 
   if (rssResponse.getResponseCode() !== 200) return history;
 
@@ -48,17 +53,10 @@ function fetchAndPostNewPapers(rssData, webhookData) {
 
   if (!newPapers.length) return history;
 
-  const title = `Here are ${newPapers.length} new papers for *${keyword}* :eyes:`;
-  const blocks = [{
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: title
-    }
-  }];
-  blocks.push(...newPapers.map(getInfoFromRSS).reduce(appendPapersToBlocks, []));
-  const slackResponse = sendSlackMsg(title, blocks, webhookUrl);
-  return slackResponse.getResponseCode() === 200 ? JSON.stringify([...historySet]) : history;
+  const title = `\nHere are ${newPapers.length} new papers for ${keyword}\n`;
+  const blocks = newPapers.map(linegetInfoFromRSS).reduce(lineappendPapersToBlocks,[title])
+  const slackResponse = blocks.map(text => sendLineNotification(text,token)).every(r => r.getResponseCode() === 200)
+  return slackResponse ? JSON.stringify([...historySet]) : history;
 }
 
 /**
@@ -68,17 +66,17 @@ function fetchAndPostNewPapers(rssData, webhookData) {
  * @param {GoogleAppsScript.XML_Service.Element} item - An XML Element object representing an item from an RSS feed.
  * @returns {string} - A formatted string containing the item's information in mrkdwn format, including a link to the item, title, translated title, author(s), journal, and date.
  */
-function getInfoFromRSS(item) {
+function linegetInfoFromRSS(item) {
   const nsDc = XmlService.getNamespace("dc", "http://purl.org/dc/elements/1.1/");
   const pmid = item.getChildText('guid').replace("pubmed:", "");
   const link = `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
-  const title = mrkdwnEscape(item.getChildText('title').replace(/<\/?(em|i)>/g, "_").replace(/<\/?(sup|sub)>/g, ""));
+  const title = lineEscape(item.getChildText('title').replace(/<\/?(em|sup|sub)>/g, ""));
   const titleJa = LanguageApp.translate(title, 'en', 'ja');
   const authors = item.getChildren('creator', nsDc);
-  let author = authors.length ? `${authors[0].getText()}${authors.length > 1 ? ", _et al._" : ""}` : "No Author";
+  let author = authors.length ? `${authors[0].getText()}${authors.length > 1 ? ", et al." : ""}` : "No Author";
   const journal = item.getChildText('source', nsDc);
   const date = item.getChildText('date', nsDc);
-  return `><${link}|*${title}*>\n>${titleJa}\n>${author} _*${journal}*_ ${date}\n  \n`;
+  return `\n${title}\n${titleJa}\n${author} ${journal} ${date} ${link}\n`
 }
 
 /**
@@ -90,41 +88,13 @@ function getInfoFromRSS(item) {
  * @param {number} index - The current index of the item being processed, used to determine if a new section should be created.
  * @returns {Array} - An updated array of block objects with the formatted text appended.
  */
-function appendPapersToBlocks(blocks, text, index) {
-  if (index % 5 === 0) {
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: ""
-      }
-    });
+function lineappendPapersToBlocks(blocks, text, index) {
+  if (blocks[blocks.length - 1].length + text.length > 1000) {
+    blocks.push(text)
+  } else {
+    blocks[blocks.length - 1] += text;
   }
-  blocks[blocks.length - 1].text.text += text;
   return blocks;
-}
-
-/**
- * Sends a message with a title and blocks to a Slack channel using a webhook URL.
- *
- * @function
- * @param {string} title - The title of the message to be sent to Slack.
- * @param {Array} blocks - An array of block objects to be included in the Slack message.
- * @param {string} webhookUrl - The webhook URL for the Slack channel where the message will be sent.
- * @returns {HTTPResponse} - The HTTP response object returned by the UrlFetchApp.fetch method.
- */
-function sendSlackMsg(title, blocks, webhookUrl) {
-  const payload = {
-    text: title,
-    blocks: blocks
-  };
-  const options = {
-    method: "post",
-    headers: { "Content-type": "application/json" },
-    payload: JSON.stringify(payload),
-    muteHttpExceptions:true
-  };
-  return UrlFetchApp.fetch(webhookUrl, options);
 }
 
 /**
@@ -134,12 +104,35 @@ function sendSlackMsg(title, blocks, webhookUrl) {
  * @param {string} string - The input string that contains special characters to be escaped.
  * @returns {string} - A new string with special characters escaped for use in mrkdwn.
  */
-function mrkdwnEscape(string) {
-  return string.replace(/[&<>]/g, function (match) {
+function lineEscape(string) {
+  return string.replace(/(&amp;|&lt;|&gt;)/g, function (match) {
     return {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
+      '&amp;': '&',
+      '&lt;': '<',
+      '&gt;': '>',
     }[match];
   });
+}
+
+
+
+/**
+ * Sends a text message notification to a LINE account using the LINE Notify API.
+ * 
+ * @function
+ * @param {string} text - The text message to be sent as a LINE notification.
+ * @param {string} token - The LINE Notify API access token.
+ * @returns {HTTPResponse} - The HTTP response returned by the LINE Notify API after sending the notification.
+ */
+function sendLineNotification(text, token) {
+  const url = "https://notify-api.line.me/api/notify";
+  const options = {
+    method: "post",
+    headers: {
+      Authorization: "Bearer " + token,
+    },
+    payload: "message=" + text,
+    muteHttpExceptions:true
+  };
+  return UrlFetchApp.fetch(url, options,);
 }
